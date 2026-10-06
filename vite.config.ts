@@ -9,10 +9,15 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { liveVoiceDev } from "./live-vite-plugin";
 
 export default defineConfig({
-  vite: { plugins: [liveVoiceDev()] },
+  vite: {
+    plugins: [liveVoiceDev()],
+    build: {
+      chunkSizeWarningLimit: 1600,
+    },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
+    // nitro/vite builds from
     server: { entry: "server" },
   },
 });

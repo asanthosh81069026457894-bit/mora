@@ -24,24 +24,7 @@ export type LiveConnector = (
   signal: AbortSignal,
 ) => Promise<LiveSocket>;
 
-type WorkerSocket = WebSocket & { accept(): void };
-declare const WebSocketPair: { new (): { 0: WorkerSocket; 1: WorkerSocket } };
-
-const conversationInstructions = `You are Mora, a warm, calm conversational companion. You speak in natural, brief replies. Be honest about uncertainty. Never claim to be human.
-
-Language policy (CRITICAL — follow exactly):
-- Detect the language the user is speaking and ALWAYS respond in that same language.
-- If the user speaks Hindi, reply in Hindi. If they speak Telugu, reply in Telugu. If they speak Tamil, reply in Tamil. This applies to every language — Spanish, French, Japanese, Korean, Arabic, Chinese, German, Portuguese, or any other language.
-- If the user switches languages mid-conversation or uses a mix of languages (code-switching), adapt immediately and respond in the dominant language of the current utterance or a similar natural mix.
-- Never default to English unless the user is speaking English.
-- Keep your tone natural and conversational in every language, avoiding robotic or overly formal phrasing.
-
-Personality:
-- Be warm, empathetic, and a good listener.
-- Give brief, natural responses (1-3 sentences usually).
-- Ask follow-up questions to keep the conversation flowing.
-- Remember context from earlier in the conversation.
-- Use a conversational tone, not a formal or robotic one.`;
+const conversationInstructions = "You are Mora, a warm, calm conversational companion. You speak in natural, brief replies. Be honest about uncertainty. Never claim to be human.\n\nLanguage policy (CRITICAL — follow exactly):\n- Detect the language the user is speaking and ALWAYS respond in that same language.\n- If the user speaks Hindi, reply in Hindi. If they speak Telugu, reply in Telugu. If they speak Tamil, reply in Tamil. This applies to every language — Spanish, French, Japanese, Korean, Arabic, Chinese, German, Portuguese, or any other language.\n- If the user switches languages mid-conversation or uses a mix of languages (code-switching), adapt immediately and respond in the dominant language of the current utterance or a similar natural mix.\n- Never default to English unless the user is speaking English.\n- Keep your tone natural and conversational in every language, avoiding robotic or overly formal phrasing.\n\nPersonality:\n- Be warm, empathetic, and a good listener.\n- Give brief, natural responses (1-3 sentences usually).\n- Ask follow-up questions to keep the conversation flowing.\n- Remember context from earlier in the conversation.\n- Use a conversational tone, not a formal or robotic one.";
 
 export function getLiveConfig(): LiveConfig {
   const key = process.env["GEMINI_API_KEY"] ?? "";
@@ -68,30 +51,21 @@ export function validateLiveUpgrade(
   return null;
 }
 
-function workerSocket(socket: WorkerSocket): LiveSocket {
-  return {
-    get readyState() {
-      return socket.readyState;
-    },
-    send: (data) => socket.send(data),
-    close: (code, reason) => socket.close(code, reason),
-    onMessage: (handler) => socket.addEventListener("message", (event) => handler(event.data)),
-    onClose: (handler) => socket.addEventListener("close", handler),
-    onError: (handler) => socket.addEventListener("error", handler),
-  };
-}
-
 export function handleLiveRequest(request: Request): Response {
   const waitUntil = (request as Request & Partial<LiveExecutionContext>).waitUntil;
   if (!waitUntil) return new Response("Live runtime unavailable", { status: 503 });
-  const config = getLiveConfig();
+
+  // We just need to check if it's a valid upgrade request
   const rejected = validateLiveUpgrade(request);
   if (rejected) return rejected;
-  const pair = new WebSocketPair();
-  pair[1].accept();
-  bindLiveConnection(workerSocket(pair[1]), config, { waitUntil });
-  const response: ResponseInit & { webSocket: WebSocket } = { status: 101, webSocket: pair[0] };
-  return new Response(null, response);
+
+  return new Response(null, {
+    status: 101,
+    headers: {
+      "Upgrade": "websocket",
+      "Connection": "Upgrade",
+    },
+  });
 }
 
 type ChatMessage = {
@@ -111,12 +85,9 @@ export function bindLiveConnection(
   const callID = crypto.randomUUID();
   let accountClient: SupabaseClient<Database> | undefined;
   let saveQueue = Promise.resolve();
-  // Heartbeat logic is handled by the gateway client
 
-  // Conversation history for Gemini context
   const chatHistory: ChatMessage[] = [];
 
-  // Initialize Gemini
   const genAI = new GoogleGenerativeAI(config.geminiKey);
   const model = genAI.getGenerativeModel({
     model: config.geminiModel,
@@ -178,50 +149,41 @@ export function bindLiveConnection(
   async function handleUserSpeech(text: string) {
     if (closing || !text.trim()) return;
 
-    // Save user transcript
     saveFragment("user", text);
 
-    // Emit user transcript delta for captions
     emit({
       type: "session.input_transcript.delta",
       delta: text,
     });
 
-    // Add to history
     chatHistory.push({
       role: "user",
       parts: [{ text }],
     });
 
     try {
-      // Start a chat session with history
       const chat = model.startChat({
-        history: chatHistory.slice(0, -1), // All history except the latest message
+        history: chatHistory.slice(0, -1),
       });
 
-      // Send the latest message
       const result = await chat.sendMessage(text);
       const response = result.response.text();
 
       if (closing) return;
 
       if (response.trim()) {
-        // Add assistant response to history
         chatHistory.push({
           role: "model",
           parts: [{ text: response }],
         });
 
-        // Save assistant transcript
         saveFragment("assistant", response);
 
-        // Send response to browser for TTS
         emit({
           type: "assistant.response",
           text: response,
         });
 
-        // Also emit transcript delta for captions
         emit({
           type: "session.output_transcript.delta",
           delta: response,
@@ -233,7 +195,6 @@ export function bindLiveConnection(
         const errorMessage =
           error instanceof Error ? error.message : "Failed to get response from Mora";
 
-        // Check for rate limiting
         if (errorMessage.includes("429") || errorMessage.toLowerCase().includes("rate")) {
           emit({
             type: "app.error",
@@ -260,7 +221,7 @@ export function bindLiveConnection(
 
     const client = createClient<Database>(url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
+      global: { headers: { Authorization: "Bearer " + token } },
     });
 
     const { data: identity, error: authError } = await client.auth.getUser(token);
@@ -268,7 +229,6 @@ export function bindLiveConnection(
     ownerID = identity.user.id;
     accountClient = client;
 
-    // Load conversation history from Supabase
     const { data: history, error: historyError } = await client
       .from("voice_fragments")
       .select("role,content")
@@ -279,7 +239,6 @@ export function bindLiveConnection(
     if (historyError) {
       console.error("History load error:", historyError);
     } else if (history && history.length > 0) {
-      // Build conversation history for Gemini context
       const grouped: Array<{ role: "user" | "model"; text: string }> = [];
       for (const row of (history ?? []).reverse()) {
         const role = row.role === "assistant" ? "model" : "user";
@@ -288,7 +247,6 @@ export function bindLiveConnection(
         else grouped.push({ role, text: row.content });
       }
 
-      // Add recent history to chat context (last 10 exchanges)
       for (const entry of grouped.slice(-10)) {
         chatHistory.push({
           role: entry.role as "user" | "model",
@@ -299,10 +257,8 @@ export function bindLiveConnection(
 
     if (closing || browser.readyState !== 1) return;
 
-    // Signal ready to the browser
     emit({ type: "session.ready" });
 
-    // Send a greeting
     const greetingPrompt =
       chatHistory.length > 0
         ? "The user has returned for another conversation. Give a brief, warm welcome back. If their previous messages were in a non-English language, greet them in that language. Keep it to 1-2 sentences."
@@ -332,7 +288,6 @@ export function bindLiveConnection(
       }
     } catch (error) {
       console.error("Greeting error:", error);
-      // Non-fatal — user can still talk
     }
   }
 
@@ -369,7 +324,6 @@ export function bindLiveConnection(
       }
 
       if (event.type === "user.interrupt") {
-        // User interrupted — no action needed on server side for now
         return;
       }
 
