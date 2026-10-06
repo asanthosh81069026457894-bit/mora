@@ -1,0 +1,399 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--primary);
+  --color-card: var(--secondary);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--secondary);
+  --color-popover-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--foreground);
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  --font-sans: "DM Sans", sans-serif;
+}
+:root {
+  --background: oklch(0.105 0.002 260);
+  --foreground: oklch(0.96 0.002 260);
+  --primary: oklch(0.74 0.13 235);
+  --primary-foreground: oklch(0.15 0.025 250);
+  --secondary: oklch(0.19 0.003 260);
+  --muted-foreground: oklch(0.58 0.008 260);
+  --accent: oklch(0.25 0.006 260);
+  --border: oklch(0.25 0.006 260);
+  --destructive: oklch(0.65 0.19 25);
+  --orb-shadow: 0 0 65px oklch(0.62 0.14 235 / 0.11);
+  --orb-highlight: oklch(0.97 0.025 210 / 0.4);
+}
+* {
+  border-color: var(--border);
+  letter-spacing: 0;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+.mora-shell {
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 32px 48px 24px;
+  position: relative;
+  overflow: hidden;
+}
+.mora-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 26px;
+  font-weight: 600;
+}
+.brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 25px;
+}
+.brand-mark i {
+  width: 3px;
+  background: var(--foreground);
+  border-radius: 4px;
+  height: 12px;
+}
+.brand-mark i:nth-child(2),
+.brand-mark i:nth-child(4) {
+  height: 20px;
+}
+.brand-mark i:nth-child(3) {
+  height: 27px;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.header-divider {
+  height: 22px;
+  width: 1px;
+  background: var(--border);
+}
+.voice-space {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 40px 0 60px;
+}
+.mode-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 50px;
+}
+.mode-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.mora-orb {
+  width: 258px;
+  height: 258px;
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: var(--orb-shadow);
+  position: relative;
+  animation: breathe 5s ease-in-out infinite;
+}
+.mora-orb img {
+  width: 135%;
+  height: 135%;
+  max-width: none;
+  object-fit: cover;
+  position: absolute;
+  left: -17%;
+  top: -17%;
+  animation: flow 17s ease-in-out infinite alternate;
+}
+.mora-orb:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 10px 24px var(--orb-highlight);
+}
+.mora-orb.is-active {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.voice-heading {
+  font-size: 27px;
+  font-weight: 400;
+  margin: 38px 0 10px;
+}
+.voice-subtitle {
+  color: var(--muted-foreground);
+  font-size: 14px;
+  margin: 0;
+  text-align: center;
+}
+.voice-status {
+  display: flex;
+  gap: 5px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  margin: 24px 0 0;
+}
+.voice-status span {
+  width: 3px;
+  height: 4px;
+  background: var(--primary);
+  border-radius: 3px;
+}
+.voice-status span:nth-child(2n) {
+  height: 12px;
+}
+.voice-status span:nth-child(3n) {
+  height: 8px;
+}
+.is-live .voice-status span {
+  animation: wave 1s ease-in-out infinite alternate;
+}
+.voice-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+.call-controls {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+}
+.control-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+}
+.control-label {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.call-button {
+  border-radius: 50%;
+  width: 58px;
+  height: 58px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+}
+.call-button svg {
+  width: 21px;
+  height: 21px;
+}
+.call-primary {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: var(--foreground);
+  color: var(--background);
+}
+.call-primary:hover {
+  background: var(--primary);
+}
+.call-primary svg {
+  width: 24px;
+  height: 24px;
+}
+.call-end {
+  background: var(--destructive);
+  color: var(--foreground);
+}
+.footer-note {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.page-foot {
+  position: absolute;
+  bottom: 27px;
+  right: 48px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.audio-native {
+  width: 240px;
+  height: 32px;
+  margin-top: 15px;
+}
+.history-panel {
+  max-height: 60vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.transcript-row {
+  font-size: 14px;
+  line-height: 1.65;
+}
+.transcript-role {
+  font-size: 10px;
+  color: var(--primary);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.form-stack label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.form-stack input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 6px;
+  color: var(--foreground);
+}
+.notice {
+  font-size: 13px;
+  color: var(--primary);
+  line-height: 1.6;
+}
+.error-note {
+  color: var(--destructive);
+  font-size: 13px;
+  max-width: 400px;
+  text-align: center;
+  margin: 18px 0 0;
+}
+.dialog-body {
+  background: var(--secondary);
+  color: var(--foreground);
+  border-radius: 8px;
+}
+@keyframes flow {
+  0% {
+    transform: rotate(-15deg) translate(-3%, -3%);
+  }
+  100% {
+    transform: rotate(22deg) translate(3%, 3%);
+  }
+}
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
+}
+@keyframes wave {
+  to {
+    height: 17px;
+  }
+}
+@media (min-width: 1600px) {
+  .mora-shell {
+    max-width: 1600px;
+    margin: auto;
+  }
+}
+@media (max-width: 600px) {
+  .mora-shell {
+    padding: 24px 22px 22px;
+  }
+  .brand {
+    font-size: 23px;
+  }
+  .header-actions {
+    gap: 8px;
+  }
+  .header-divider {
+    display: none;
+  }
+  .voice-space {
+    padding: 35px 0 45px;
+  }
+  .mode-label {
+    margin-bottom: 46px;
+  }
+  .mora-orb {
+    width: 215px;
+    height: 215px;
+  }
+  .voice-heading {
+    font-size: 24px;
+    margin-top: 34px;
+  }
+  .page-foot {
+    display: none;
+  }
+  .voice-bottom {
+    gap: 23px;
+  }
+  .call-controls {
+    gap: 25px;
+  }
+  .header-account {
+    font-size: 12px;
+    padding: 0 8px;
+  }
+}
+@media (max-height: 700px) {
+  .mode-label {
+    margin-bottom: 24px;
+  }
+  .voice-space {
+    padding: 20px 0;
+  }
+  .mora-orb {
+    width: 180px;
+    height: 180px;
+  }
+  .voice-heading {
+    margin-top: 24px;
+  }
+  .voice-status {
+    margin-top: 15px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
