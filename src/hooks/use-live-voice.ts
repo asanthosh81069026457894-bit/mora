@@ -44,6 +44,7 @@ export function useLiveVoice(
   useEffect(() => {
     latest.current = options;
   });
+
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -61,15 +62,21 @@ export function useLiveVoice(
       setCall((previous) => ({ ...previous, error: "Voice playback is not mounted." }));
       return;
     }
+
+    // VERCEL FIX: Use an environment variable for the Voice Server URL
+    // In Vercel, set VITE_VOICE_URL to your Railway URL (e.g. wss://your-relay.up.railway.app)
+    const voiceUrl = import.meta.env.VITE_VOICE_URL || "/api/live";
+
     let endpoint: URL;
     try {
-      endpoint = new URL(latest.current.url ?? "/api/live", window.location.href);
+      endpoint = new URL(voiceUrl, window.location.href);
       if (endpoint.protocol === "https:") endpoint.protocol = "wss:";
       if (endpoint.protocol === "http:") endpoint.protocol = "ws:";
     } catch {
       setCall((previous) => ({ ...previous, error: "Invalid voice connection URL." }));
       return;
     }
+
     const voice = createLiveVoice({
       url: endpoint.href,
       token: latest.current.token,
@@ -117,9 +124,11 @@ export function useLiveVoice(
   const stop = useCallback(() => {
     controller.current?.stop();
   }, []);
+
   const setMuted = useCallback((muted: boolean) => {
     if (controller.current?.setMuted(muted)) setCall((previous) => ({ ...previous, muted }));
   }, []);
+
   const resumePlayback = useCallback(() => {
     void controller.current?.resumePlayback();
   }, []);
@@ -134,7 +143,6 @@ type LiveOptions = {
   onEvent: (event: LiveEvent) => void;
 };
 
-// Detect browser SpeechRecognition support
 const SpeechRecognitionClass = (typeof window !== "undefined" &&
   ((window as unknown as Record<string, unknown>).SpeechRecognition ??
     (window as unknown as Record<string, unknown>).webkitSpeechRecognition)) as
@@ -213,7 +221,6 @@ function createLiveVoice(options: LiveOptions) {
   function setMuted(value: boolean) {
     if (state !== "starting" && state !== "active") return false;
     muted = value;
-    // When muted, pause recognition; when unmuted, restart it
     if (muted) {
       stopRecognition();
     } else if (state === "active") {
@@ -223,7 +230,6 @@ function createLiveVoice(options: LiveOptions) {
   }
 
   async function resumePlayback() {
-    // Browser TTS doesn't need explicit resume typically
     if (state !== "starting" && state !== "active") return;
     options.onEvent({ type: "app.playback.resumed" });
   }
@@ -236,10 +242,7 @@ function createLiveVoice(options: LiveOptions) {
 
   function speakText(text: string) {
     if (state === "stopping" || state === "closed") return;
-    if (!window.speechSynthesis) {
-      // No TTS available, just emit the transcript
-      return;
-    }
+    if (!window.speechSynthesis) return;
 
     stopSpeaking();
     speaking = true;
@@ -247,10 +250,8 @@ function createLiveVoice(options: LiveOptions) {
     const utterance = new SpeechSynthesisUtterance(text);
     currentUtterance = utterance;
 
-    // Try to pick a good voice for the detected language
     const voices = window.speechSynthesis.getVoices();
     if (voices.length > 0) {
-      // Prefer a female voice that matches — or fall back to default
       const preferred = voices.find(
         (v) =>
           v.lang.startsWith(navigator.language.slice(0, 2)) &&
@@ -267,7 +268,6 @@ function createLiveVoice(options: LiveOptions) {
     utterance.onend = () => {
       speaking = false;
       currentUtterance = null;
-      // Resume listening after speaking
       if (state === "active" && !muted) {
         startRecognition();
       }
@@ -281,7 +281,6 @@ function createLiveVoice(options: LiveOptions) {
       }
     };
 
-    // Pause recognition while speaking to avoid echo
     stopRecognition();
 
     try {
@@ -296,17 +295,14 @@ function createLiveVoice(options: LiveOptions) {
 
   function startRecognition() {
     if (!SpeechRecognitionClass || muted || state !== "active") return;
-    if (recognition) return; // already running
+    if (recognition) return;
 
     try {
       const rec = new SpeechRecognitionClass();
       rec.continuous = true;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
-
-      // Allow the browser to auto-detect the language
-      // Setting lang to empty or a broad value helps with multilingual
-      rec.lang = ""; // Auto-detect — browser will use device language as hint
+      rec.lang = "";
 
       rec.onresult = (event: SpeechRecognitionEvent) => {
         if (state !== "active") return;
@@ -317,7 +313,6 @@ function createLiveVoice(options: LiveOptions) {
           const transcript = result[0].transcript;
 
           if (result.isFinal && transcript.trim()) {
-            // Send final transcript to server
             options.onEvent({
               type: "session.input_transcript.delta",
               delta: transcript,
@@ -328,7 +323,6 @@ function createLiveVoice(options: LiveOptions) {
               final: true,
             });
 
-            // If Mora is speaking, interrupt her
             if (speaking) {
               stopSpeaking();
               send({ type: "user.interrupt" });
@@ -339,16 +333,13 @@ function createLiveVoice(options: LiveOptions) {
 
       rec.onerror = (event: SpeechRecognitionErrorEvent) => {
         if (event.error === "no-speech" || event.error === "aborted") {
-          // These are normal — restart recognition
           recognition = undefined;
           if (state === "active" && !muted && !speaking) {
             setTimeout(() => startRecognition(), 300);
           }
           return;
         }
-        console.error("Speech recognition error:", event.error);
         recognition = undefined;
-        // Restart after brief delay for recoverable errors
         if (state === "active" && !muted && !speaking) {
           setTimeout(() => startRecognition(), 1000);
         }
@@ -356,7 +347,6 @@ function createLiveVoice(options: LiveOptions) {
 
       rec.onend = () => {
         recognition = undefined;
-        // Auto-restart recognition for continuous listening
         if (state === "active" && !muted && !speaking) {
           setTimeout(() => startRecognition(), 200);
         }
@@ -365,9 +355,7 @@ function createLiveVoice(options: LiveOptions) {
       rec.start();
       recognition = rec;
     } catch (error) {
-      console.error("Failed to start speech recognition:", error);
       recognition = undefined;
-      // Retry after delay
       if (state === "active" && !muted && !speaking) {
         setTimeout(() => startRecognition(), 1000);
       }
@@ -390,17 +378,15 @@ function createLiveVoice(options: LiveOptions) {
     state = "starting";
     window.addEventListener("pagehide", stop);
 
-    // Check for Speech Recognition support
     if (!SpeechRecognitionClass) {
       fail("Your browser does not support speech recognition. Please use Chrome or Edge.");
       return;
     }
 
     try {
-      // Request microphone permission (needed for SpeechRecognition in some browsers)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop()); // Release immediately
+        stream.getTracks().forEach((track) => track.stop());
       } catch {
         fail("Microphone permission is required for voice calls.");
         return;
@@ -408,12 +394,10 @@ function createLiveVoice(options: LiveOptions) {
 
       if (!starting()) return;
 
-      // Load voices
       if (window.speechSynthesis) {
         window.speechSynthesis.getVoices();
       }
 
-      // Connect WebSocket to server
       socket = new WebSocket(options.url);
       deadline = setTimeout(() => fail("Voice session did not start"), 15_000);
 
@@ -427,17 +411,12 @@ function createLiveVoice(options: LiveOptions) {
           const event: LiveEvent = JSON.parse(data);
 
           if (event.type === "session.ready") {
-            // Server is ready — go active
             if (!starting()) return;
             state = "active";
             startTime = Date.now();
             clearTimeout(deadline);
             lastAck = Date.now();
-
-            // Start heartbeat
             heartbeat = setInterval(pulse, 5000);
-
-            // Start usage timer
             usageTimer = setInterval(() => {
               if (state !== "active") return;
               const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -446,13 +425,9 @@ function createLiveVoice(options: LiveOptions) {
                 usage: { seconds: elapsed },
               });
             }, 1000);
-
-            // Start listening
             if (!muted) startRecognition();
-
             options.onEvent({ type: "app.connected" });
           } else if (event.type === "assistant.response") {
-            // Server sent Mora's text response — speak it and show transcript
             const text = typeof event["text"] === "string" ? event["text"] : "";
             if (text.trim()) {
               options.onEvent({
