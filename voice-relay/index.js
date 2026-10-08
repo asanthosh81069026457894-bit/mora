@@ -10,19 +10,22 @@ const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  console.error('Missing required environment variables: GEMINI_API_KEY, SUPABASE_URL, or SUPABASE_PUBLISHABLE_KEY');
-  process.exit(1);
+  console.warn('WARNING: Missing environment variables on Render! Required: GEMINI_API_KEY, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY');
 }
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash',
-  systemInstruction: `You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.
+let genAI = null;
+let model = null;
+
+if (GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  model = genAI.getGenerativeModel({
+    model: 'gemini-2.0-flash',
+    systemInstruction: `You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.
 
 Language Policy (CRITICAL — follow exactly):
 - Detect the language the user is speaking and ALWAYS respond in that same language.
@@ -34,13 +37,19 @@ Personality & Versatility:
 - Be enthusiastic, empathetic, and exceptionally helpful.
 - Fulfill every user request cheerfully and creatively.
 - Keep responses engaging, natural, and conversational.`,
-});
+  });
+}
 
 // Create HTTP server for Render health checks and WebSockets
 const server = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'Mora Voice Relay' }));
+    const ready = Boolean(GEMINI_API_KEY && SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
+    res.writeHead(ready ? 200 : 500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: ready ? 'ok' : 'error',
+      service: 'Mora Voice Relay',
+      message: ready ? 'Voice Relay Server is running' : 'Missing environment variables on Render (GEMINI_API_KEY, SUPABASE_URL, or SUPABASE_PUBLISHABLE_KEY)'
+    }));
   } else {
     res.writeHead(404);
     res.end();
@@ -51,6 +60,16 @@ const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   console.log('New client connected');
+  if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY || !model) {
+    console.error('Connection rejected: Environment variables missing on server');
+    ws.send(JSON.stringify({
+      type: 'app.error',
+      error: { message: 'Server configuration error: Please add GEMINI_API_KEY, SUPABASE_URL, and SUPABASE_PUBLISHABLE_KEY in your Render dashboard.' }
+    }));
+    ws.close(1011, 'Server unconfigured');
+    return;
+  }
+
   let ownerID = null;
   let accountClient = null;
   let chatHistory = [];
