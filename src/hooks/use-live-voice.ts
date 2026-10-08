@@ -1,5 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+  message?: string;
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
 export type LiveEvent = {
   type: string;
   reason?: string;
@@ -64,12 +86,26 @@ export function useLiveVoice(
     }
 
     // VERCEL FIX: Use an environment variable for the Voice Server URL
-    // In Vercel, set VITE_VOICE_URL to your Railway URL (e.g. wss://your-relay.up.railway.app)
-    const voiceUrl = import.meta.env.VITE_VOICE_URL || "/api/live";
+    // In Vercel, set VITE_VOICE_URL to your Render/Railway URL (e.g. wss://your-relay.onrender.com)
+    const envUrl = (import.meta.env as Record<string, string | undefined>)["VITE_VOICE_URL"];
+    let rawVoiceUrl = (envUrl || "").trim().replace(/^['"]|['"]$/g, "");
+    if (!rawVoiceUrl) {
+      rawVoiceUrl = "/api/live";
+    }
+
+    if (
+      !rawVoiceUrl.startsWith("http://") &&
+      !rawVoiceUrl.startsWith("https://") &&
+      !rawVoiceUrl.startsWith("ws://") &&
+      !rawVoiceUrl.startsWith("wss://") &&
+      !rawVoiceUrl.startsWith("/")
+    ) {
+      rawVoiceUrl = "wss://" + rawVoiceUrl;
+    }
 
     let endpoint: URL;
     try {
-      endpoint = new URL(voiceUrl, window.location.href);
+      endpoint = new URL(rawVoiceUrl, window.location.href);
       if (endpoint.protocol === "https:") endpoint.protocol = "wss:";
       if (endpoint.protocol === "http:") endpoint.protocol = "ws:";
     } catch {
@@ -144,14 +180,14 @@ type LiveOptions = {
 };
 
 const SpeechRecognitionClass = (typeof window !== "undefined" &&
-  ((window as unknown as Record<string, unknown>).SpeechRecognition ??
-    (window as unknown as Record<string, unknown>).webkitSpeechRecognition)) as
-  (new () => SpeechRecognition) | undefined;
+  ((window as unknown as Record<string, unknown>)["SpeechRecognition"] ??
+    (window as unknown as Record<string, unknown>)["webkitSpeechRecognition"])) as
+  (new () => SpeechRecognitionInstance) | undefined;
 
 function createLiveVoice(options: LiveOptions) {
   let state: "idle" | "starting" | "active" | "stopping" | "closed" = "idle";
   let socket: WebSocket | undefined;
-  let recognition: SpeechRecognition | undefined;
+  let recognition: SpeechRecognitionInstance | undefined;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let usageTimer: ReturnType<typeof setInterval> | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
