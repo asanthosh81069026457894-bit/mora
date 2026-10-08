@@ -1,4 +1,8 @@
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch (e) {
+  // Environment variables provided natively by host (Render/Vercel)
+}
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
