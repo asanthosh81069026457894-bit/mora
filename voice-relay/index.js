@@ -82,23 +82,34 @@ wss.on('connection', (ws) => {
 
       if (event.type === 'app.start') {
         const token = event.token;
-        if (!token) throw new Error('Missing token');
+        if (!token) {
+          ws.send(JSON.stringify({ type: 'app.error', error: { message: 'Please sign in to start a voice call.' } }));
+          return;
+        }
 
         accountClient = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
           global: { headers: { Authorization: `Bearer ${token}` } },
         });
 
         const { data: { user }, error: authError } = await accountClient.auth.getUser(token);
-        if (authError || !user) throw new Error('Auth failed');
+        if (authError || !user) {
+          console.error('Auth verification failed:', authError);
+          ws.send(JSON.stringify({ type: 'app.error', error: { message: 'Please sign in to talk with Mora.' } }));
+          return;
+        }
         ownerID = user.id;
 
         // Load history
-        const { data: history } = await accountClient
+        const { data: history, error: historyErr } = await accountClient
           .from('voice_fragments')
           .select('role,content')
           .eq('user_id', ownerID)
           .order('created_at', { ascending: false })
           .limit(20);
+
+        if (historyErr) {
+          console.error('History fetch error:', historyErr);
+        }
 
         if (history) {
           chatHistory = history.reverse().map(row => ({
@@ -114,15 +125,22 @@ wss.on('connection', (ws) => {
           ? "Welcome back the user warmly in their language. 1-2 sentences."
           : "Greet the user warmly and ask one friendly opening question. 1-2 sentences.";
 
-        const chat = model.startChat({ history: chatHistory });
-        const result = await chat.sendMessage(prompt);
-        const greeting = result.response.text();
+        try {
+          const chat = model.startChat({ history: chatHistory });
+          const result = await chat.sendMessage(prompt);
+          const greeting = result.response.text();
 
-        chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
-        chatHistory.push({ role: 'model', parts: [{ text: greeting }] });
+          chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
+          chatHistory.push({ role: 'model', parts: [{ text: greeting }] });
 
-        ws.send(JSON.stringify({ type: 'assistant.response', text: greeting }));
-        ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: greeting }));
+          ws.send(JSON.stringify({ type: 'assistant.response', text: greeting }));
+          ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: greeting }));
+        } catch (genErr) {
+          console.error('Greeting Generation Error:', genErr);
+          const fallbackGreeting = "Hello! I'm Mora. How can I help you today?";
+          ws.send(JSON.stringify({ type: 'assistant.response', text: fallbackGreeting }));
+          ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: fallbackGreeting }));
+        }
       }
 
       if (event.type === 'user.speech' && event.text) {
@@ -160,7 +178,10 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: response }));
         } catch (e) {
           console.error('Gemini Error:', e);
-          ws.send(JSON.stringify({ type: 'app.error', error: { message: 'Mora is having trouble responding.' } }));
+          const errMessage = e instanceof Error && e.message.includes('429') 
+            ? 'Mora is thinking too fast! Please wait a moment.' 
+            : 'Mora is having trouble responding right now.';
+          ws.send(JSON.stringify({ type: 'app.error', error: { message: errMessage } }));
         }
       }
 
@@ -174,7 +195,8 @@ wss.on('connection', (ws) => {
       }
     } catch (e) {
       console.error('Message Error:', e);
-      ws.send(JSON.stringify({ type: 'app.error', error: { message: 'Server error' } }));
+      const errMsg = e instanceof Error ? e.message : 'Server error occurred';
+      ws.send(JSON.stringify({ type: 'app.error', error: { message: errMsg } }));
     }
   });
 
