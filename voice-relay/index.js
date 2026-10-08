@@ -1,9 +1,11 @@
 require('dotenv').config();
-const { WebSocketServer, WebSocket } = require('ws');
+const http = require('http');
+const { WebSocketServer } = require('ws');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 8080;
+const HOST = '0.0.0.0';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY;
@@ -16,22 +18,32 @@ if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({
   model: 'gemini-2.0-flash',
-  systemInstruction: `You are Mora, a warm, calm conversational companion. You speak in natural, brief replies. Be honest about uncertainty. Never claim to be human.
+  systemInstruction: `You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.
 
-Language policy (CRITICAL — follow exactly):
+Language Policy (CRITICAL — follow exactly):
 - Detect the language the user is speaking and ALWAYS respond in that same language.
-- If the user speaks Hindi, reply in Hindi. If they speak Telugu, reply in Telugu. If they speak Tamil, reply in Tamil. This applies to every language.
-- If the user switches languages mid-conversation, adapt immediately.
+- Supports all languages worldwide including Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Spanish, French, German, Japanese, Korean, Arabic, Chinese, etc.
+- If the user switches languages mid-conversation or mixes languages, adapt immediately.
 - Never default to English unless the user is speaking English.
 
-Personality:
-- Be warm, empathetic, and a good listener.
-- Give brief, natural responses (1-3 sentences usually).
-- Ask follow-up questions to keep the conversation flowing.`,
+Personality & Versatility:
+- Be enthusiastic, empathetic, and exceptionally helpful.
+- Fulfill every user request cheerfully and creatively.
+- Keep responses engaging, natural, and conversational.`,
 });
 
-const wss = new WebSocketServer({ port: PORT });
-console.log(`Voice Relay Server started on port ${PORT}`);
+// Create HTTP server for Render health checks and WebSockets
+const server = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', service: 'Mora Voice Relay' }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
   console.log('New client connected');
@@ -144,4 +156,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => console.log('Client disconnected'));
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`Voice Relay Server listening on http://${HOST}:${PORT}`);
 });

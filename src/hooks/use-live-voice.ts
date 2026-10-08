@@ -457,7 +457,14 @@ function createLiveVoice(options: LiveOptions) {
         }
       };
 
-      socket.onerror = () => fail("Voice connection failed");
+      socket.onerror = () => {
+        const isVercelHost = typeof window !== "undefined" && !window.location.hostname.includes("localhost") && !window.location.hostname.includes("127.0.0.1");
+        if (isVercelHost && options.url.includes("/api/live")) {
+          fail("Voice server unreachable. On Vercel, set VITE_VOICE_URL to your Render WebSocket URL (e.g. wss://your-relay.onrender.com)");
+        } else {
+          fail("Voice connection failed. Make sure the voice relay server is running.");
+        }
+      };
       socket.onclose = () => {
         if (state !== "stopping" && state !== "closed") {
           options.onEvent({
