@@ -36,7 +36,7 @@ async function callGemini(messages) {
     throw new Error('GEMINI_API_KEY is not configured on server. Please add your GEMINI_API_KEY starting with AIzaSy in Render dashboard.');
   }
 
-  const geminiModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
   let lastErr = null;
 
   for (const modelName of geminiModels) {
@@ -111,7 +111,7 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
   console.log('New client connected');
   const missing = [];
-  if (!GROQ_API_KEY) missing.push('GROQ_API_KEY');
+  if (!GEMINI_API_KEY) missing.push('GEMINI_API_KEY');
   if (!SUPABASE_URL) missing.push('SUPABASE_URL');
   if (!SUPABASE_PUBLISHABLE_KEY) missing.push('SUPABASE_PUBLISHABLE_KEY');
 
@@ -264,6 +264,6 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Voice Relay Server (Groq API) listening on http://${HOST}:${PORT}`);
+  console.log(`Voice Relay Server (Google Gemini API) listening on http://${HOST}:${PORT}`);
 });
 

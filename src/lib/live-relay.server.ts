@@ -4,8 +4,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 
 export type LiveConfig = {
-  groqKey: string;
-  groqModel: string;
+  geminiKey: string;
+  geminiModel: string;
 };
 
 export type LiveSocket = {
@@ -96,7 +96,7 @@ export function bindLiveConnection(
       throw new Error("GEMINI_API_KEY is not configured on server. Please add your key starting with AIzaSy in environment variables.");
     }
 
-    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    const geminiModels = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"];
     let lastErr: Error | null = null;
 
     for (const gModel of geminiModels) {
@@ -214,7 +214,7 @@ export function bindLiveConnection(
     });
 
     try {
-      const response = await callGroqAPI(chatHistory);
+      const response = await callGeminiAPI(chatHistory);
 
       if (closing) return;
 
@@ -241,7 +241,7 @@ export function bindLiveConnection(
       if (!closing) {
         const fallbackMessage =
           error instanceof Error && error.message.includes("API_KEY")
-            ? "I can hear you! Please add an OPENROUTER_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY to your server settings so I can generate AI responses."
+            ? "I can hear you! Please add a GEMINI_API_KEY to your server settings so I can generate AI responses."
             : "I'm sorry, I had trouble generating a response. Could you please try speaking again?";
 
         emit({
@@ -301,7 +301,7 @@ export function bindLiveConnection(
         : "A new user has started a conversation. Give a brief, warm greeting and ask one friendly opening question. Keep it to 1-2 sentences.";
 
     try {
-      const greeting = await callGroqAPI([
+      const greeting = await callGeminiAPI([
         ...chatHistory,
         { role: "user", content: greetingPrompt },
       ]);
