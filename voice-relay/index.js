@@ -17,12 +17,10 @@ const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_MODELS = [
   GROQ_MODEL,
   'llama-3.1-8b-instant',
+  'llama-3.3-70b-versatile',
   'gemma2-9b-it',
   'qwen-2.5-32b',
-  'llama-3.3-70b-versatile',
   'mixtral-8x7b-32768',
-  'llama3-8b-8192',
-  'llama3-70b-8192',
 ];
 const GROQ_MODEL_QUEUE = [...new Set(GROQ_MODELS)];
 
@@ -148,10 +146,29 @@ async function callGroq(messages) {
           groqErr = new Error('Invalid GROQ_API_KEY. Please verify your Groq key.');
           break;
         }
+
         if (response.status === 429) {
           groqErr = new Error('Groq rate limit reached (429).');
           break;
         }
+
+        if (
+          response.status === 400 ||
+          response.status === 404 ||
+          errText.includes('decommissioned') ||
+          errText.includes('does not exist') ||
+          errText.includes('model_not_found')
+        ) {
+          console.warn(`Groq model ${modelCandidate} unavailable or decommissioned. Skipping...`);
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error?.message) groqErr = new Error(`Groq: ${parsed.error.message}`);
+          } catch (_) {
+            groqErr = new Error(`Groq model error: ${response.status}`);
+          }
+          continue;
+        }
+
         try {
           const parsed = JSON.parse(errText);
           if (parsed.error?.message) groqErr = new Error(`Groq: ${parsed.error.message}`);

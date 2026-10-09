@@ -26,7 +26,7 @@ export type LiveConnector = (
 
 const conversationInstructions = "You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.\n\nLanguage policy (CRITICAL — follow exactly):\n- Detect the language the user is speaking and ALWAYS respond in that same language.\n- Supports all languages worldwide including Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Spanish, French, German, Japanese, Korean, Arabic, Chinese, etc.\n- If the user switches languages mid-conversation or mixes languages, adapt immediately and respond in that language.\n- Never default to English unless the user is speaking English.\n\nPersonality & Versatility:\n- Be enthusiastic, empathetic, and exceptionally helpful.\n- Fulfill every user request cheerfully and creatively.\n- Keep responses engaging, natural, and conversational.";
 
-const FALLBACK_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768"];
+const FALLBACK_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "gemma2-9b-it", "qwen-2.5-32b", "mixtral-8x7b-32768"];
 
 export function getLiveConfig(): LiveConfig {
   const key = process.env["GROQ_API_KEY"] ?? process.env["GEMINI_API_KEY"] ?? "";
@@ -133,7 +133,14 @@ export function bindLiveConnection(
           throw new Error("Invalid GROQ_API_KEY. Please check your environment variables.");
         }
 
-        if (response.status === 404 || errText.includes("does not exist") || errText.includes("model_not_found")) {
+        if (
+          response.status === 400 ||
+          response.status === 404 ||
+          errText.includes("decommissioned") ||
+          errText.includes("does not exist") ||
+          errText.includes("model_not_found")
+        ) {
+          console.warn(`Groq model ${modelCandidate} is decommissioned or unavailable. Skipping...`);
           lastError = new Error(detailedMsg);
           continue;
         }
