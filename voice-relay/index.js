@@ -9,9 +9,21 @@ const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
-const FALLBACK_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'llama3-8b-8192', 'llama3-70b-8192', 'mixtral-8x7b-32768'];
+const GROQ_MODELS = [
+  GROQ_MODEL,
+  'llama-3.1-8b-instant',
+  'gemma2-9b-it',
+  'qwen-2.5-32b',
+  'llama-3.3-70b-versatile',
+  'mixtral-8x7b-32768',
+  'llama3-8b-8192',
+  'llama3-70b-8192',
+];
+const GROQ_MODEL_QUEUE = [...new Set(GROQ_MODELS)];
+
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -28,77 +40,97 @@ Personality & Versatility:
 - Fulfill every user request cheerfully and creatively.
 - Keep responses engaging, natural, and conversational.`;
 
-if (!GROQ_API_KEY || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  console.warn('WARNING: Missing environment variables on Render! Required: GROQ_API_KEY, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY');
+if ((!GROQ_API_KEY && !GEMINI_API_KEY) || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  console.warn('WARNING: Missing environment variables on Render! Required: GROQ_API_KEY (or GEMINI_API_KEY), SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY');
+}
+
+async function callGemini(messages) {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured.');
+  const geminiModels = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+  for (const gModel of geminiModels) {
+    try {
+      const contents = messages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }));
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${GEMINI_API_KEY.trim()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents,
+          systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] }
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (text.trim()) return text.trim();
+      }
+    } catch (_) {}
+  }
+  throw new Error('Gemini API call failed');
 }
 
 async function callGroq(messages) {
-  if (!GROQ_API_KEY) {
-    throw new Error('GROQ_API_KEY is not configured on server.');
-  }
-
-  const modelsToTry = [GROQ_MODEL, ...FALLBACK_MODELS.filter(m => m !== GROQ_MODEL)];
-  let lastError = null;
-
-  for (const modelCandidate of modelsToTry) {
-    try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY.trim()}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: modelCandidate,
-          messages: [
-            { role: 'system', content: SYSTEM_INSTRUCTION },
-            ...messages
-          ],
-          temperature: 0.7,
-          max_tokens: 1024,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content || '';
-        return text.trim();
-      }
-
-      const errorBodyText = await response.text();
-      console.error(`Groq API Error for model ${modelCandidate} (${response.status}):`, errorBodyText);
-
-      let detailedMsg = `Groq API returned status ${response.status}`;
+  let groqErr = null;
+  if (GROQ_API_KEY) {
+    for (const modelCandidate of GROQ_MODEL_QUEUE) {
       try {
-        const parsed = JSON.parse(errorBodyText);
-        if (parsed.error?.message) {
-          detailedMsg = `Groq: ${parsed.error.message}`;
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: modelCandidate,
+            messages: [
+              { role: 'system', content: SYSTEM_INSTRUCTION },
+              ...messages
+            ],
+            temperature: 0.7,
+            max_tokens: 1024,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.choices?.[0]?.message?.content || '';
+          if (text.trim()) return text.trim();
         }
-      } catch (_) {}
 
-      if (response.status === 401) {
-        throw new Error('Invalid GROQ_API_KEY. Please set a valid key starting with gsk_ in your environment variables.');
-      }
+        const errText = await response.text();
+        console.error(`Groq (${modelCandidate}) failed ${response.status}:`, errText);
 
-      if (response.status === 404 || errorBodyText.includes('does not exist') || errorBodyText.includes('model_not_found')) {
-        lastError = new Error(detailedMsg);
-        continue;
+        if (response.status === 401) {
+          groqErr = new Error('Invalid GROQ_API_KEY. Please verify your Groq key.');
+          break;
+        }
+        if (response.status === 429) {
+          groqErr = new Error('Groq rate limit reached (429).');
+          break;
+        }
+        try {
+          const parsed = JSON.parse(errText);
+          if (parsed.error?.message) groqErr = new Error(`Groq: ${parsed.error.message}`);
+        } catch (_) {
+          groqErr = new Error(`Groq status ${response.status}`);
+        }
+      } catch (e) {
+        groqErr = e instanceof Error ? e : new Error(String(e));
       }
-
-      if (response.status === 429) {
-        throw new Error('Groq rate limit reached (429). Please wait a moment.');
-      }
-
-      throw new Error(detailedMsg);
-    } catch (err) {
-      if (err instanceof Error && (err.message.includes('Invalid GROQ_API_KEY') || err.message.includes('429'))) {
-        throw err;
-      }
-      lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
 
-  throw lastError || new Error('All Groq model attempts failed.');
+  if (GEMINI_API_KEY) {
+    try {
+      return await callGemini(messages);
+    } catch (gErr) {
+      console.error('Gemini fallback failed:', gErr);
+    }
+  }
+
+  throw groqErr || new Error('No AI provider available. Please set GROQ_API_KEY or GEMINI_API_KEY.');
 }
 
 // Create HTTP server for Render health checks and WebSockets
