@@ -11,6 +11,8 @@ const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || process.env.VITE_OPENROUTER_API_KEY;
+
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_MODELS = [
   GROQ_MODEL,
@@ -40,8 +42,48 @@ Personality & Versatility:
 - Fulfill every user request cheerfully and creatively.
 - Keep responses engaging, natural, and conversational.`;
 
-if ((!GROQ_API_KEY && !GEMINI_API_KEY) || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  console.warn('WARNING: Missing environment variables on Render! Required: GROQ_API_KEY (or GEMINI_API_KEY), SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY');
+const HAS_AI_KEY = Boolean(GROQ_API_KEY || OPENROUTER_API_KEY || GEMINI_API_KEY);
+
+if (!HAS_AI_KEY || !SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  console.warn('WARNING: Missing environment variables on Render! Required: An AI key (GROQ_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY), SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY');
+}
+
+async function callOpenRouter(messages) {
+  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not configured.');
+  const models = [
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'google/gemma-2-9b-it:free',
+    'qwen/qwen-2.5-72b-instruct:free',
+    'deepseek/deepseek-r1:free',
+  ];
+  for (const model of models) {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENROUTER_API_KEY.trim()}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://mora.app',
+          'X-Title': 'Mora Voice Assistant',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_INSTRUCTION },
+            ...messages
+          ],
+          temperature: 0.7,
+          max_tokens: 1024,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content || '';
+        if (text.trim()) return text.trim();
+      }
+    } catch (_) {}
+  }
+  throw new Error('OpenRouter free models unavailable.');
 }
 
 async function callGemini(messages) {
@@ -122,6 +164,14 @@ async function callGroq(messages) {
     }
   }
 
+  if (OPENROUTER_API_KEY) {
+    try {
+      return await callOpenRouter(messages);
+    } catch (orErr) {
+      console.error('OpenRouter fallback failed:', orErr);
+    }
+  }
+
   if (GEMINI_API_KEY) {
     try {
       return await callGemini(messages);
@@ -130,7 +180,7 @@ async function callGroq(messages) {
     }
   }
 
-  throw groqErr || new Error('No AI provider available. Please set GROQ_API_KEY or GEMINI_API_KEY.');
+  throw groqErr || new Error('No valid AI key found. Please add GROQ_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY to your environment variables.');
 }
 
 // Create HTTP server for Render health checks and WebSockets
