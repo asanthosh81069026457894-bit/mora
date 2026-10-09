@@ -36,7 +36,7 @@ async function callGemini(messages) {
     throw new Error('GEMINI_API_KEY is not configured on server. Please add your GEMINI_API_KEY starting with AIzaSy in Render dashboard.');
   }
 
-  const geminiModels = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const geminiModels = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-flash-latest'];
   let lastErr = null;
 
   for (const modelName of geminiModels) {

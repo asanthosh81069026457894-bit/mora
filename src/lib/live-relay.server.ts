@@ -35,7 +35,7 @@ export function getLiveConfig(): LiveConfig {
   }
   return {
     geminiKey: key,
-    geminiModel: "gemini-2.0-flash",
+    geminiModel: "gemini-3.8-flash",
   };
 }
 
@@ -96,7 +96,7 @@ export function bindLiveConnection(
       throw new Error("GEMINI_API_KEY is not configured on server. Please add your key starting with AIzaSy in environment variables.");
     }
 
-    const geminiModels = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"];
+    const geminiModels = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"];
     let lastErr: Error | null = null;
 
     for (const gModel of geminiModels) {
