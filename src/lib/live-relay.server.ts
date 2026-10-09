@@ -90,20 +90,28 @@ export function bindLiveConnection(
 
   const chatHistory: ChatMessage[] = [];
 
-  async function callGroqAPI(messages: Array<{ role: string; content: string }>) {
-    const modelsToTry = [config.groqModel, ...FALLBACK_MODELS.filter((m) => m !== config.groqModel)];
-    let lastError: Error | null = null;
-
-    for (const modelCandidate of modelsToTry) {
+  async function callOpenRouter(messages: Array<{ role: string; content: string }>) {
+    const key = process.env["OPENROUTER_API_KEY"] || process.env["VITE_OPENROUTER_API_KEY"];
+    if (!key) throw new Error("OPENROUTER_API_KEY not configured.");
+    const models = [
+      "meta-llama/llama-3.3-70b-instruct:free",
+      "qwen/qwen-2.5-72b-instruct:free",
+      "google/gemma-2-9b-it:free",
+      "deepseek/deepseek-r1:free",
+    ];
+    let lastErr: Error | null = null;
+    for (const model of models) {
       try {
-        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${config.groqKey.trim()}`,
+            "Authorization": `Bearer ${key.trim()}`,
             "Content-Type": "application/json",
+            "HTTP-Referer": "https://mora.app",
+            "X-Title": "Mora Voice Assistant",
           },
           body: JSON.stringify({
-            model: modelCandidate,
+            model,
             messages: [
               { role: "system", content: conversationInstructions },
               ...messages,
@@ -112,53 +120,110 @@ export function bindLiveConnection(
             max_tokens: 1024,
           }),
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          return (data.choices?.[0]?.message?.content || "").trim();
-        }
-
-        const errText = await response.text();
-        console.error(`Groq API Error for model ${modelCandidate} (${response.status}):`, errText);
-
-        let detailedMsg = `Groq API returned status ${response.status}`;
-        try {
-          const parsed = JSON.parse(errText);
-          if (parsed.error?.message) {
-            detailedMsg = `Groq: ${parsed.error.message}`;
+        if (res.ok) {
+          const data = await res.json();
+          const text = (data.choices?.[0]?.message?.content || "").trim();
+          if (text) return text;
+        } else {
+          const errText = await res.text();
+          console.error(`OpenRouter (${model}) failed (${res.status}):`, errText);
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error?.message) lastErr = new Error(`OpenRouter: ${parsed.error.message}`);
+          } catch (_) {
+            lastErr = new Error(`OpenRouter status ${res.status}`);
           }
-        } catch (_) {}
-
-        if (response.status === 401) {
-          throw new Error("Invalid GROQ_API_KEY. Please check your environment variables.");
         }
-
-        if (
-          response.status === 400 ||
-          response.status === 404 ||
-          errText.includes("decommissioned") ||
-          errText.includes("does not exist") ||
-          errText.includes("model_not_found")
-        ) {
-          console.warn(`Groq model ${modelCandidate} is decommissioned or unavailable. Skipping...`);
-          lastError = new Error(detailedMsg);
-          continue;
-        }
-
-        if (response.status === 429) {
-          throw new Error("Groq rate limit reached (429). Please wait a moment.");
-        }
-
-        throw new Error(detailedMsg);
       } catch (err) {
-        if (err instanceof Error && (err.message.includes("Invalid GROQ_API_KEY") || err.message.includes("429"))) {
-          throw err;
+        lastErr = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+    throw lastErr || new Error("OpenRouter free models unavailable.");
+  }
+
+  async function callGeminiAPI(messages: Array<{ role: string; content: string }>) {
+    const key = process.env["GEMINI_API_KEY"] || process.env["VITE_GEMINI_API_KEY"];
+    if (!key) throw new Error("GEMINI_API_KEY not configured.");
+    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    for (const gModel of geminiModels) {
+      try {
+        const contents = messages.map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        }));
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key.trim()}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents,
+              systemInstruction: { parts: [{ text: conversationInstructions }] },
+            }),
+          },
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+          if (text) return text;
         }
-        lastError = err instanceof Error ? err : new Error(String(err));
+      } catch (_) {}
+    }
+    throw new Error("Gemini API call failed.");
+  }
+
+  async function callGroqAPI(messages: Array<{ role: string; content: string }>) {
+    // Preference 1: OpenRouter API
+    if (process.env["OPENROUTER_API_KEY"] || process.env["VITE_OPENROUTER_API_KEY"]) {
+      try {
+        return await callOpenRouter(messages);
+      } catch (orErr) {
+        console.error("OpenRouter failed:", orErr);
       }
     }
 
-    throw lastError || new Error("All Groq model attempts failed.");
+    // Preference 2: Gemini API
+    if (process.env["GEMINI_API_KEY"] || process.env["VITE_GEMINI_API_KEY"]) {
+      try {
+        return await callGeminiAPI(messages);
+      } catch (gErr) {
+        console.error("Gemini failed:", gErr);
+      }
+    }
+
+    // Preference 3: Groq API fallback
+    const key = process.env["GROQ_API_KEY"] || process.env["VITE_GROQ_API_KEY"];
+    if (key) {
+      const activeGroqModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
+      for (const modelCandidate of activeGroqModels) {
+        try {
+          const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${key.trim()}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: modelCandidate,
+              messages: [
+                { role: "system", content: conversationInstructions },
+                ...messages,
+              ],
+              temperature: 0.7,
+              max_tokens: 1024,
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const text = (data.choices?.[0]?.message?.content || "").trim();
+            if (text) return text;
+          }
+        } catch (_) {}
+      }
+    }
+
+    throw new Error("No AI provider available. Please set OPENROUTER_API_KEY or GEMINI_API_KEY in your environment variables.");
   }
 
   function emit(event: object) {
