@@ -54,12 +54,23 @@ async function callGroq(messages) {
   });
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`Groq API Error (${response.status}):`, errorBody);
+    const errorBodyText = await response.text();
+    console.error(`Groq API Error (${response.status}):`, errorBodyText);
+    let detailedMsg = `Groq API returned status ${response.status}`;
+    try {
+      const parsed = JSON.parse(errorBodyText);
+      if (parsed.error?.message) {
+        detailedMsg = `Groq: ${parsed.error.message}`;
+      }
+    } catch (_) {}
+
+    if (response.status === 401) {
+      throw new Error('Invalid GROQ_API_KEY. Please set a valid key starting with gsk_ in your environment variables.');
+    }
     if (response.status === 429) {
       throw new Error('Groq rate limit reached (429). Please wait a moment.');
     }
-    throw new Error(`Groq API returned error status ${response.status}`);
+    throw new Error(detailedMsg);
   }
 
   const data = await response.json();
@@ -222,9 +233,7 @@ wss.on('connection', (ws) => {
           }
         } catch (e) {
           console.error('Groq Error:', e);
-          const errMessage = e instanceof Error && e.message.includes('429') 
-            ? 'Mora is thinking too fast! Please wait a moment.' 
-            : 'Mora is having trouble responding right now.';
+          const errMessage = e instanceof Error ? e.message : 'Mora is having trouble responding right now.';
           ws.send(JSON.stringify({ type: 'app.error', error: { message: errMessage } }));
         }
       }

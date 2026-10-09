@@ -109,7 +109,21 @@ export function bindLiveConnection(
     if (!response.ok) {
       const errText = await response.text();
       console.error(`Groq API Error (${response.status}):`, errText);
-      throw new Error(`Groq API returned status ${response.status}`);
+      let detailedMsg = `Groq API returned status ${response.status}`;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed.error?.message) {
+          detailedMsg = `Groq: ${parsed.error.message}`;
+        }
+      } catch (_) {}
+
+      if (response.status === 401) {
+        throw new Error("Invalid GROQ_API_KEY. Please check your environment variables.");
+      }
+      if (response.status === 429) {
+        throw new Error("Groq rate limit reached (429). Please wait a moment.");
+      }
+      throw new Error(detailedMsg);
     }
 
     const data = await response.json();
