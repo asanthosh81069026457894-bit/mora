@@ -26,6 +26,8 @@ export type LiveConnector = (
 
 const conversationInstructions = "You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.\n\nLanguage policy (CRITICAL — follow exactly):\n- Detect the language the user is speaking and ALWAYS respond in that same language.\n- Supports all languages worldwide including Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Spanish, French, German, Japanese, Korean, Arabic, Chinese, etc.\n- If the user switches languages mid-conversation or mixes languages, adapt immediately and respond in that language.\n- Never default to English unless the user is speaking English.\n\nPersonality & Versatility:\n- Be enthusiastic, empathetic, and exceptionally helpful.\n- Fulfill every user request cheerfully and creatively.\n- Keep responses engaging, natural, and conversational.";
 
+const FALLBACK_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768"];
+
 export function getLiveConfig(): LiveConfig {
   const key = process.env["GROQ_API_KEY"] ?? process.env["GEMINI_API_KEY"] ?? "";
   if (!key) {
@@ -33,7 +35,7 @@ export function getLiveConfig(): LiveConfig {
   }
   return {
     groqKey: key,
-    groqModel: process.env["GROQ_MODEL"] ?? "llama-3.3-70b-versatile",
+    groqModel: process.env["GROQ_MODEL"] ?? "llama-3.1-8b-instant",
   };
 }
 
@@ -89,45 +91,67 @@ export function bindLiveConnection(
   const chatHistory: ChatMessage[] = [];
 
   async function callGroqAPI(messages: Array<{ role: string; content: string }>) {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${config.groqKey.trim()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.groqModel,
-        messages: [
-          { role: "system", content: conversationInstructions },
-          ...messages,
-        ],
-        temperature: 0.7,
-        max_tokens: 1024,
-      }),
-    });
+    const modelsToTry = [config.groqModel, ...FALLBACK_MODELS.filter((m) => m !== config.groqModel)];
+    let lastError: Error | null = null;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error(`Groq API Error (${response.status}):`, errText);
-      let detailedMsg = `Groq API returned status ${response.status}`;
+    for (const modelCandidate of modelsToTry) {
       try {
-        const parsed = JSON.parse(errText);
-        if (parsed.error?.message) {
-          detailedMsg = `Groq: ${parsed.error.message}`;
-        }
-      } catch (_) {}
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${config.groqKey.trim()}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: modelCandidate,
+            messages: [
+              { role: "system", content: conversationInstructions },
+              ...messages,
+            ],
+            temperature: 0.7,
+            max_tokens: 1024,
+          }),
+        });
 
-      if (response.status === 401) {
-        throw new Error("Invalid GROQ_API_KEY. Please check your environment variables.");
+        if (response.ok) {
+          const data = await response.json();
+          return (data.choices?.[0]?.message?.content || "").trim();
+        }
+
+        const errText = await response.text();
+        console.error(`Groq API Error for model ${modelCandidate} (${response.status}):`, errText);
+
+        let detailedMsg = `Groq API returned status ${response.status}`;
+        try {
+          const parsed = JSON.parse(errText);
+          if (parsed.error?.message) {
+            detailedMsg = `Groq: ${parsed.error.message}`;
+          }
+        } catch (_) {}
+
+        if (response.status === 401) {
+          throw new Error("Invalid GROQ_API_KEY. Please check your environment variables.");
+        }
+
+        if (response.status === 404 || errText.includes("does not exist") || errText.includes("model_not_found")) {
+          lastError = new Error(detailedMsg);
+          continue;
+        }
+
+        if (response.status === 429) {
+          throw new Error("Groq rate limit reached (429). Please wait a moment.");
+        }
+
+        throw new Error(detailedMsg);
+      } catch (err) {
+        if (err instanceof Error && (err.message.includes("Invalid GROQ_API_KEY") || err.message.includes("429"))) {
+          throw err;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
       }
-      if (response.status === 429) {
-        throw new Error("Groq rate limit reached (429). Please wait a moment.");
-      }
-      throw new Error(detailedMsg);
     }
 
-    const data = await response.json();
-    return (data.choices?.[0]?.message?.content || "").trim();
+    throw lastError || new Error("All Groq model attempts failed.");
   }
 
   function emit(event: object) {

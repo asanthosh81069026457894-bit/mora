@@ -10,7 +10,8 @@ const { createClient } = require('@supabase/supabase-js');
 const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
+const FALLBACK_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'llama3-8b-8192', 'llama3-70b-8192', 'mixtral-8x7b-32768'];
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -36,46 +37,68 @@ async function callGroq(messages) {
     throw new Error('GROQ_API_KEY is not configured on server.');
   }
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY.trim()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_INSTRUCTION },
-        ...messages
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
-    }),
-  });
+  const modelsToTry = [GROQ_MODEL, ...FALLBACK_MODELS.filter(m => m !== GROQ_MODEL)];
+  let lastError = null;
 
-  if (!response.ok) {
-    const errorBodyText = await response.text();
-    console.error(`Groq API Error (${response.status}):`, errorBodyText);
-    let detailedMsg = `Groq API returned status ${response.status}`;
+  for (const modelCandidate of modelsToTry) {
     try {
-      const parsed = JSON.parse(errorBodyText);
-      if (parsed.error?.message) {
-        detailedMsg = `Groq: ${parsed.error.message}`;
-      }
-    } catch (_) {}
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY.trim()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelCandidate,
+          messages: [
+            { role: 'system', content: SYSTEM_INSTRUCTION },
+            ...messages
+          ],
+          temperature: 0.7,
+          max_tokens: 1024,
+        }),
+      });
 
-    if (response.status === 401) {
-      throw new Error('Invalid GROQ_API_KEY. Please set a valid key starting with gsk_ in your environment variables.');
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content || '';
+        return text.trim();
+      }
+
+      const errorBodyText = await response.text();
+      console.error(`Groq API Error for model ${modelCandidate} (${response.status}):`, errorBodyText);
+
+      let detailedMsg = `Groq API returned status ${response.status}`;
+      try {
+        const parsed = JSON.parse(errorBodyText);
+        if (parsed.error?.message) {
+          detailedMsg = `Groq: ${parsed.error.message}`;
+        }
+      } catch (_) {}
+
+      if (response.status === 401) {
+        throw new Error('Invalid GROQ_API_KEY. Please set a valid key starting with gsk_ in your environment variables.');
+      }
+
+      if (response.status === 404 || errorBodyText.includes('does not exist') || errorBodyText.includes('model_not_found')) {
+        lastError = new Error(detailedMsg);
+        continue;
+      }
+
+      if (response.status === 429) {
+        throw new Error('Groq rate limit reached (429). Please wait a moment.');
+      }
+
+      throw new Error(detailedMsg);
+    } catch (err) {
+      if (err instanceof Error && (err.message.includes('Invalid GROQ_API_KEY') || err.message.includes('429'))) {
+        throw err;
+      }
+      lastError = err instanceof Error ? err : new Error(String(err));
     }
-    if (response.status === 429) {
-      throw new Error('Groq rate limit reached (429). Please wait a moment.');
-    }
-    throw new Error(detailedMsg);
   }
 
-  const data = await response.json();
-  const text = data.choices?.[0]?.message?.content || '';
-  return text.trim();
+  throw lastError || new Error('All Groq model attempts failed.');
 }
 
 // Create HTTP server for Render health checks and WebSockets
