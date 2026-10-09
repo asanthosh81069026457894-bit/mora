@@ -330,9 +330,13 @@ wss.on('connection', (ws) => {
             ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: response }));
           }
         } catch (e) {
-          console.error('Groq Error:', e);
-          const errMessage = e instanceof Error ? e.message : 'Mora is having trouble responding right now.';
-          ws.send(JSON.stringify({ type: 'app.error', error: { message: errMessage } }));
+          console.error('AI Processing Error:', e);
+          const fallbackMessage = e instanceof Error && e.message.includes('API_KEY')
+            ? "I can hear you! Please add an OPENROUTER_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY to your server settings so I can generate AI responses."
+            : "I had a momentary glitch reaching the AI server. Could you please say that again?";
+
+          ws.send(JSON.stringify({ type: 'assistant.response', text: fallbackMessage }));
+          ws.send(JSON.stringify({ type: 'session.output_transcript.delta', delta: fallbackMessage }));
         }
       }
 

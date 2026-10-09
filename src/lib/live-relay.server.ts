@@ -317,22 +317,21 @@ export function bindLiveConnection(
         });
       }
     } catch (error) {
-      console.error("Groq API error:", error);
+      console.error("AI API error:", error);
       if (!closing) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Failed to get response from Mora";
+        const fallbackMessage =
+          error instanceof Error && error.message.includes("API_KEY")
+            ? "I can hear you! Please add an OPENROUTER_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY to your server settings so I can generate AI responses."
+            : "I'm sorry, I had trouble generating a response. Could you please try speaking again?";
 
-        if (errorMessage.includes("429") || errorMessage.toLowerCase().includes("rate")) {
-          emit({
-            type: "app.error",
-            error: { message: "Mora is thinking too fast! Please wait a moment and try again." },
-          });
-        } else {
-          emit({
-            type: "assistant.response",
-            text: "I'm sorry, I had trouble understanding that. Could you try again?",
-          });
-        }
+        emit({
+          type: "assistant.response",
+          text: fallbackMessage,
+        });
+        emit({
+          type: "session.output_transcript.delta",
+          delta: fallbackMessage,
+        });
       }
     }
   }
