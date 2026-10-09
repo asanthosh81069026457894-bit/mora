@@ -29,13 +29,13 @@ const conversationInstructions = "You are Mora, a warm, intelligent, highly capa
 const FALLBACK_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "gemma2-9b-it", "qwen-2.5-32b", "mixtral-8x7b-32768"];
 
 export function getLiveConfig(): LiveConfig {
-  const key = process.env["GROQ_API_KEY"] ?? process.env["GEMINI_API_KEY"] ?? "";
+  const key = process.env["GEMINI_API_KEY"] ?? "";
   if (!key) {
-    throw new Error("Missing GROQ_API_KEY environment variable");
+    console.warn("Missing GEMINI_API_KEY environment variable");
   }
   return {
-    groqKey: key,
-    groqModel: process.env["GROQ_MODEL"] ?? "llama-3.1-8b-instant",
+    geminiKey: key,
+    geminiModel: "gemini-2.0-flash",
   };
 }
 
@@ -90,67 +90,22 @@ export function bindLiveConnection(
 
   const chatHistory: ChatMessage[] = [];
 
-  async function callOpenRouter(messages: Array<{ role: string; content: string }>) {
-    const key = process.env["OPENROUTER_API_KEY"] || process.env["VITE_OPENROUTER_API_KEY"];
-    if (!key) throw new Error("OPENROUTER_API_KEY not configured.");
-    const models = [
-      "meta-llama/llama-3.3-70b-instruct:free",
-      "qwen/qwen-2.5-72b-instruct:free",
-      "google/gemma-2-9b-it:free",
-      "deepseek/deepseek-r1:free",
-    ];
-    let lastErr: Error | null = null;
-    for (const model of models) {
-      try {
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${key.trim()}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://mora.app",
-            "X-Title": "Mora Voice Assistant",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: conversationInstructions },
-              ...messages,
-            ],
-            temperature: 0.7,
-            max_tokens: 1024,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const text = (data.choices?.[0]?.message?.content || "").trim();
-          if (text) return text;
-        } else {
-          const errText = await res.text();
-          console.error(`OpenRouter (${model}) failed (${res.status}):`, errText);
-          try {
-            const parsed = JSON.parse(errText);
-            if (parsed.error?.message) lastErr = new Error(`OpenRouter: ${parsed.error.message}`);
-          } catch (_) {
-            lastErr = new Error(`OpenRouter status ${res.status}`);
-          }
-        }
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-      }
-    }
-    throw lastErr || new Error("OpenRouter free models unavailable.");
-  }
-
   async function callGeminiAPI(messages: Array<{ role: string; content: string }>) {
-    const key = process.env["GEMINI_API_KEY"] || process.env["VITE_GEMINI_API_KEY"];
-    if (!key) throw new Error("GEMINI_API_KEY not configured.");
-    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    const key = process.env["GEMINI_API_KEY"] || process.env["VITE_GEMINI_API_KEY"] || config.geminiKey;
+    if (!key || !key.trim()) {
+      throw new Error("GEMINI_API_KEY is not configured on server. Please add your key starting with AIzaSy in environment variables.");
+    }
+
+    const geminiModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    let lastErr: Error | null = null;
+
     for (const gModel of geminiModels) {
       try {
         const contents = messages.map((m) => ({
           role: m.role === "assistant" ? "model" : "user",
           parts: [{ text: m.content }],
         }));
+
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${gModel}:generateContent?key=${key.trim()}`,
           {
@@ -162,68 +117,33 @@ export function bindLiveConnection(
             }),
           },
         );
+
         if (res.ok) {
           const data = await res.json();
           const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
           if (text) return text;
+        } else {
+          const errText = await res.text();
+          console.error(`Gemini API Error for ${gModel} (${res.status}):`, errText);
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error?.message) {
+              lastErr = new Error(`Gemini: ${parsed.error.message}`);
+            }
+          } catch (_) {
+            lastErr = new Error(`Gemini API returned status ${res.status}`);
+          }
         }
-      } catch (_) {}
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+      }
     }
-    throw new Error("Gemini API call failed.");
+
+    throw lastErr || new Error("Gemini API call failed.");
   }
 
   async function callGroqAPI(messages: Array<{ role: string; content: string }>) {
-    // Preference 1: OpenRouter API
-    if (process.env["OPENROUTER_API_KEY"] || process.env["VITE_OPENROUTER_API_KEY"]) {
-      try {
-        return await callOpenRouter(messages);
-      } catch (orErr) {
-        console.error("OpenRouter failed:", orErr);
-      }
-    }
-
-    // Preference 2: Gemini API
-    if (process.env["GEMINI_API_KEY"] || process.env["VITE_GEMINI_API_KEY"]) {
-      try {
-        return await callGeminiAPI(messages);
-      } catch (gErr) {
-        console.error("Gemini failed:", gErr);
-      }
-    }
-
-    // Preference 3: Groq API fallback
-    const key = process.env["GROQ_API_KEY"] || process.env["VITE_GROQ_API_KEY"];
-    if (key) {
-      const activeGroqModels = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
-      for (const modelCandidate of activeGroqModels) {
-        try {
-          const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${key.trim()}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: modelCandidate,
-              messages: [
-                { role: "system", content: conversationInstructions },
-                ...messages,
-              ],
-              temperature: 0.7,
-              max_tokens: 1024,
-            }),
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            const text = (data.choices?.[0]?.message?.content || "").trim();
-            if (text) return text;
-          }
-        } catch (_) {}
-      }
-    }
-
-    throw new Error("No AI provider available. Please set OPENROUTER_API_KEY or GEMINI_API_KEY in your environment variables.");
+    return await callGeminiAPI(messages);
   }
 
   function emit(event: object) {
