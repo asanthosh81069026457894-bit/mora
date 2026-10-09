@@ -4,8 +4,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 
 export type LiveConfig = {
-  geminiKey: string;
-  geminiModel: string;
+  groqKey: string;
+  groqModel: string;
 };
 
 export type LiveSocket = {
@@ -27,13 +27,13 @@ export type LiveConnector = (
 const conversationInstructions = "You are Mora, a warm, intelligent, highly capable conversational AI companion. You gladly fulfill whatever the user asks — whether it's answering questions, giving advice, telling stories, roleplaying, or singing songs! When asked to sing, write out rhythmic, poetic lyrics full of expression so the voice synthesis sings them naturally.\n\nLanguage policy (CRITICAL — follow exactly):\n- Detect the language the user is speaking and ALWAYS respond in that same language.\n- Supports all languages worldwide including Hindi, Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Spanish, French, German, Japanese, Korean, Arabic, Chinese, etc.\n- If the user switches languages mid-conversation or mixes languages, adapt immediately and respond in that language.\n- Never default to English unless the user is speaking English.\n\nPersonality & Versatility:\n- Be enthusiastic, empathetic, and exceptionally helpful.\n- Fulfill every user request cheerfully and creatively.\n- Keep responses engaging, natural, and conversational.";
 
 export function getLiveConfig(): LiveConfig {
-  const key = process.env["GEMINI_API_KEY"] ?? "";
+  const key = process.env["GROQ_API_KEY"] ?? process.env["GEMINI_API_KEY"] ?? "";
   if (!key) {
-    throw new Error("Missing GEMINI_API_KEY environment variable");
+    throw new Error("Missing GROQ_API_KEY environment variable");
   }
   return {
-    geminiKey: key,
-    geminiModel: "gemini-2.0-flash",
+    groqKey: key,
+    groqModel: process.env["GROQ_MODEL"] ?? "llama-3.3-70b-versatile",
   };
 }
 
@@ -69,8 +69,8 @@ export function handleLiveRequest(request: Request): Response {
 }
 
 type ChatMessage = {
-  role: "user" | "model";
-  parts: Array<{ text: string }>;
+  role: "user" | "assistant";
+  content: string;
 };
 
 export function bindLiveConnection(
@@ -88,11 +88,33 @@ export function bindLiveConnection(
 
   const chatHistory: ChatMessage[] = [];
 
-  const genAI = new GoogleGenerativeAI(config.geminiKey);
-  const model = genAI.getGenerativeModel({
-    model: config.geminiModel,
-    systemInstruction: conversationInstructions,
-  });
+  async function callGroqAPI(messages: Array<{ role: string; content: string }>) {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.groqKey.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.groqModel,
+        messages: [
+          { role: "system", content: conversationInstructions },
+          ...messages,
+        ],
+        temperature: 0.7,
+        max_tokens: 1024,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`Groq API Error (${response.status}):`, errText);
+      throw new Error(`Groq API returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return (data.choices?.[0]?.message?.content || "").trim();
+  }
 
   function emit(event: object) {
     if (browser.readyState !== 1) return;
@@ -158,23 +180,18 @@ export function bindLiveConnection(
 
     chatHistory.push({
       role: "user",
-      parts: [{ text }],
+      content: text,
     });
 
     try {
-      const chat = model.startChat({
-        history: chatHistory.slice(0, -1),
-      });
-
-      const result = await chat.sendMessage(text);
-      const response = result.response.text();
+      const response = await callGroqAPI(chatHistory);
 
       if (closing) return;
 
       if (response.trim()) {
         chatHistory.push({
-          role: "model",
-          parts: [{ text: response }],
+          role: "assistant",
+          content: response,
         });
 
         saveFragment("assistant", response);
@@ -190,7 +207,7 @@ export function bindLiveConnection(
         });
       }
     } catch (error) {
-      console.error("Gemini API error:", error);
+      console.error("Groq API error:", error);
       if (!closing) {
         const errorMessage =
           error instanceof Error ? error.message : "Failed to get response from Mora";
@@ -239,19 +256,9 @@ export function bindLiveConnection(
     if (historyError) {
       console.error("History load error:", historyError);
     } else if (history && history.length > 0) {
-      const grouped: Array<{ role: "user" | "model"; text: string }> = [];
       for (const row of (history ?? []).reverse()) {
-        const role = row.role === "assistant" ? "model" : "user";
-        const previous = grouped.at(-1);
-        if (previous?.role === role) previous.text += row.content;
-        else grouped.push({ role, text: row.content });
-      }
-
-      for (const entry of grouped.slice(-10)) {
-        chatHistory.push({
-          role: entry.role as "user" | "model",
-          parts: [{ text: entry.text.slice(-800) }],
-        });
+        const role = row.role === "assistant" ? "assistant" : "user";
+        chatHistory.push({ role, content: row.content });
       }
     }
 
@@ -265,16 +272,17 @@ export function bindLiveConnection(
         : "A new user has started a conversation. Give a brief, warm greeting and ask one friendly opening question. Keep it to 1-2 sentences.";
 
     try {
-      const chat = model.startChat({ history: chatHistory });
-      const result = await chat.sendMessage(greetingPrompt);
-      const greeting = result.response.text();
+      const greeting = await callGroqAPI([
+        ...chatHistory,
+        { role: "user", content: greetingPrompt },
+      ]);
 
       if (closing) return;
 
       if (greeting.trim()) {
         chatHistory.push(
-          { role: "user", parts: [{ text: greetingPrompt }] },
-          { role: "model", parts: [{ text: greeting }] },
+          { role: "user", content: greetingPrompt },
+          { role: "assistant", content: greeting },
         );
 
         emit({
